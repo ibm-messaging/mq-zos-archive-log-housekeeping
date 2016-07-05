@@ -1,8 +1,507 @@
-//*
-//* Copyright (c) 2016 IBM Corporation and other Contributors.
-//*
-//* All rights reserved. This program and the accompanying materials
-//* are made available under the terms of the Eclipse Public License 
-//* v1.0 which accompanies this distribution, and is available at
-//* http://www.eclipse.org/legal/epl-v10.html
-//*
+%
+%* Copyright (c) 2016 IBM Corporation and other Contributors.
+%*
+%* All rights reserved. This program and the accompanying materials
+%* are made available under the terms of the Eclipse Public License v1.0
+%* which accompanies this distribution, and is available at
+%* http://www.eclipse.org/legal/epl-v10.html
+%
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[a4paper,12pt]{report}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{fancyvrb}
+\usepackage{enumitem}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{enumitem}
+\begin{document}
+%
+% variables and macros
+%
+%\defconfidential{~}
+\newcommand{\wmq}{IBM MQ }
+\newcommand{\wmqz}{\wmq for z/OS }
+
+% Remove the word 'Chapter' 
+\renewcommand{\chaptername}{}
+% and remove the number
+\renewcommand{\thechapter}{}
+
+% turn off chapter and section numbers
+\setcounter{secnumdepth}{0}
+
+
+% starts here
+%
+
+\renewcommand{\abstractname}{Release Note}
+\begin{abstract}
+The original "User Guide" provided with MS15 has been converted to 
+Latex from IBM's BookManager format and follows.
+
+The code, mnglogs.exec, was most recently updated in 2014 to handle 
+the 8 byte 
+"wide" RBA capability provided in \wmq Version 8.0
+\end{abstract}
+
+%-------------Add final date at publication ----------------
+\date{20th December, 1999}
+\title{
+MS15: MQSeries for MVS/ESA\\ Archive log housekeeping\\
+Version 1.2\\
+User Guide
+}
+\author{Pete Siddall\\
+IBM Hursley Development Lab\\
+pete\_siddall@uk.ibm.com
+}
+\maketitle
+%:frontm
+%:tipage
+%:notices
+
+\clearpage
+\begin{flushleft}
+\begin{tabular}{|p{\textwidth}|}
+%\begin{tabular}{| l |}
+\hline
+Take Note!\\
+\hline
+Before using this User's Guide and the product it supports, be sure
+to read the general information under
+"Notices".\\
+\hline
+\end{tabular}
+\end{flushleft}
+
+%
+% =====================================================================
+%:vnotice.
+%\subsection[Notices]{Notices}
+%----------------------------------------------------------------------
+%
+\begin{description}
+\item [Fourth Edition, April 2005]
+This edition solves some issues with deleting archives.
+If the delete of an archive log or bsds copy fails for a reason other
+than entry not found, the TSO error messages are shown.
+
+A new option, DELPURGE, allows the PURGE operand of the DELETE
+command to be used, overriding any expiration processing.
+
+\item [Third Edition, September 2002]
+This edition features changes made to packaging as a result of
+re-issuing the software to accomodate changes required to support
+WebSphere MQ for z/OS Version 5 Release 3.
+
+\item [Second Edition, December 1999]
+This edition applies to Version 1.1 of MQSeries for MVS/ESA
+Archive log housekeeping
+and to all subsequent releases and modifications until
+otherwise indicated in new editions.
+\end{description}
+%
+A form for reader's comments is provided at the back of this publication.
+If the form has been removed, address your comments to:
+\begin{verbatim}
+IBM United Kingdom Laboratories
+Transaction Systems Marketing Support (MP102)
+Hursley Park
+Hursley
+Hampshire, SO21 2JN, England
+\end{verbatim}
+
+When you send information to IBM, you grant IBM a non-exclusive right
+to use or distribute the information in any way it believes appropriate
+without incurring any obligation to you.  You may continue to use the
+information that you supply.
+%.config rcf off
+%
+\subsection{Copyright}
+Copyright \copyright 1999, 2016 IBM Corporation and other Contributors.
+
+All rights reserved. This program and the accompanying materials
+are made available under the terms of the Eclipse Public License v1.0
+which accompanies this distribution, and is available at
+http://www.eclipse.org/legal/epl-v10.html
+
+%:toc.
+%.*:figlist.
+%.* =====================================================================
+\chapter[Notices]{Notices}
+%.*----------------------------------------------------------------------
+%.*
+
+\textbf{The following paragraph does not apply in any country where such
+provisions are inconsistent with local law.
+}
+
+\noindent
+INTERNATIONAL BUSINESS MACHINES CORPORATION PROVIDES THIS
+PUBLICATION "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR
+IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+
+Some states do not allow disclaimer of express or implied warranties in certain
+transactions, therefore this statement may not apply to you.
+
+References in this publication to IBM products, programs, or services do not
+imply that IBM intends to make these available in all countries in which IBM
+operates.
+
+Any reference to an IBM licensed program or other IBM product in this
+publication is not intended to state or imply that only IBM's program or other
+product may be used.  Any functionally equivalent program that does not infringe
+any of the intellectual property rights may be used instead of the IBM product.
+Evaluation and verification of operation in conjunction with other products,
+except those expressly designated by IBM, is the user's responsibility.
+
+IBM may have patents or pending patent applications covering subject matter
+in this document.  The furnishing of this document does not give you any license
+to these patents.  You can send license inquiries, in writing, to the IBM
+Director of Licensing, IBM Corporation, 500 Columbus Avenue, Thornwood, New York
+10594, USA.
+
+The information contained in this document has not be submitted to any formal
+IBM test and is distributed AS IS.  The use of the information or the
+implementation of any of these techniques is a customer responsibility and
+depends on the customer's ability to evaluate and integrate them into the
+customer's operational environment.  While each item has been reviewed by IBM
+for accuracy in a specific situation, there is no guarantee that the same or
+similar results will be obtained elsewhere.  Customers attempting to adapt these
+techniques to their own environments do so at their own risk.
+
+The following terms
+are trademarks of the International Business Machines Corporation
+in the United States and/or other countries:
+\begin{itemize}[noitemsep]
+\item MQSeries
+\item IBM
+\item MVS
+\item ESA
+\item MQM
+\end{itemize}
+
+\begin{description}[labelwidth=3cm]
+\item [Date] Changes
+\item [April 2005] Description of the new DELPURGE option.
+\item [September 2002] The SLEEP module originally supplied as part of this package is now
+no longer required as it is available in base OS/390 and z/OS function.
+\item [20th December 1999] Added function to enable this tool to be tied into backup procedures
+to ensure that archive logs are only deleted once suitable backups have
+been taken.
+\item [20th October 1999] Initial release
+\end{description}
+%.config acksoa off
+%
+%
+% :body
+%***********************************************************************
+\chapter{Introduction}
+%***********************************************************************
+%
+
+This document describes an exec designed to housekeep archive logs
+stored on disk by MQSeries for MVS/ESA, i.e. it will delete redundant
+archive logs in order to save disk space.  The archive logs are regarded
+as redundant from the MQSeries for MVS/ESA recovery perspective, i.e.
+they are not required by the product to recover from a failure.  If you
+need to keep archive logs for reasons other than recovery then you
+should not use this exec.
+
+You must keep in mind that there are certain recovery scenarios,
+where you might need the archive logs, even though they are eligible to
+be deleted by the exec, for instance if you need to restart using a
+backup of a pageset that has been damaged, you will need the active and
+archive log backups that go with the pageset backup in order to
+recover your queue manager.  For this reason, it is essential that you
+consider use of this exec in association with your backup procedures.
+
+Note: This Supportpac requires SupportPac MA19 in order to submit
+commands to the queue manager from a REXX exec.
+
+\section{Installation}
+Take the following actions to install the SupportPac from the
+MS15.ZIP file: 
+\begin{enumerate}
+\item
+Use \textbf{INFOZIP's} UNZIP to unpack the \textbf{MS15.ZIP} file.
+
+This produces
+\begin{description}
+\item [ms15.src] Source library
+\item [ms15.loa] Load library
+\item [license2.txt] License file
+\end{description}
+
+\item
+The library files need to be transferred to the destination TSO system
+as sequential binary filed with a record format of FB 80.
+Use one of the following methods to accomplish this:
+\begin{itemize}
+% :li.Use the Communications Manager/2
+% :hp4.SEND:ehp4. commands below to send the files to TSO
+% as a sequential binary files\colon 
+% :lines.
+%
+% \textbf{send ms15.src A\colon ms15.srcseq}
+%
+% \textbf{send ms15.loa A\colon ms15.loadseq}
+% :elines.
+% where \textbf{A} is the TSO session ID.
+\item To send them via ftp ensure the BINARY option is set then use
+the following commands:
+\begin{verbatim}
+ site fixrecfm 80
+ put ms15.src ms15.srcseq
+ put ms15.loa ms15.loadseq
+\end{verbatim}
+\item With Personal Communications, use the "Send Files to Host"
+option under the Transfer menu item to transmit to TSO
+\begin{verbatim}
+PC File             ms15.src etc
+Host File           ms15.srcseq etc
+Transfer Type       loadlib
+\end{verbatim}
+The Transfer type of \textbf{loadlib} may need to be correctly
+setup. To do this, use the "Setup.Define Transfer Types" option
+under the Transfer menu item and create the \textbf{loadlib} type
+with the Ascii, CRLF and Append checkboxes all unselected, the
+\textbf{Fixed} radio button selected and the \textbf{LRECL} set to
+\textbf{80}.
+\end{itemize}
+\item
+On TSO, issue the following commands to unload these sequential files
+into TSO partitioned datasets:
+\begin{itemize}
+\item
+\begin{verbatim}
+receive indsname(ms15.srcseq)
+\end{verbatim}
+when prompted for a filename, reply
+\begin{verbatim}
+dsn(ms15.source)
+\end{verbatim}
+\item
+\begin{verbatim}
+receive indsname(ms15.loadseq)
+\end{verbatim}
+when prompted for a filename, reply
+\begin{verbatim}
+dsn(ms15.load)
+\end{verbatim}
+\end{itemize}
+\item Confirm that the datasets
+have been unloaded correctly by browsing the PDS and
+ensuring the appropriate members exist as shown in the following table:\\
+\begin{tabular}{| l | l | l |}
+\hline
+%:table cols='* * *' split=no rules=vert
+%:thd.
+\textbf{DATASET} & \textbf{MS15 LOAD} & \textbf{MS15 SOURCE}\\
+\hline
+%:ethd.
+%:row.
+MEMBERS & SLEEP & MNGLOGS\\
+%:row
+ & & MNGLOGSJ\\
+%:row
+ & & SLEEP\\
+%:row
+ & & SLEEPJ\\
+\hline
+\end{tabular}
+\end{enumerate}
+%
+%***********************************************************************
+\subsection{Enabling the exec}
+%***********************************************************************
+%
+To run the exec you should tailor the MNGLOGSJ job to your
+requirements, it looks like this: 
+\begin{Verbatim}[commandchars=\\\{\}]
+//<jobcard>
+// SET MA19LOAD=\textbf{<MA19.LOADLIB>}
+// SET MS15=\textbf{<MS15 HIGH LEVEL QUALIFIERS>}
+// SET MQHLQS=\textbf{<MQSERIES HIGH LEVEL QUALIFIERS>}
+//RMNGLOGS EXEC PGM=IKJEFT01,REGION=2M,DYNAMNBR=99
+//SYSEXEC  DD DSN=&MS15..SOURCE,DISP=SHR
+//SYSTSPRT DD SYSOUT=*
+//SYSPRINT DD SYSOUT=*
+//STEPLIB  DD DSN=&MA19LOAD.,DISP=SHR           /* MA19 SUPPORTPAC */
+//         DD DSN=&MQHLQS..SCSQANLE,DISP=SHR
+//         DD DSN=&MQHLQS..SCSQAUTH,DISP=SHR
+//SYSTSIN  DD *
+ \%MNGLOGS QMGR(\textbf{<QUEUE MANAGER NAME E.G. VCMA>}) -
+   HLQS(\textbf{<MQSERIES HIGH LEVEL QUALIFIERS E.G. MQ.V210>}) -
+   BS1(\textbf{<BOOTSTRAP DATA SET NO.1 NAME E.G. MQ.VCMA.BSDS01>}) -
+   BS2(\textbf{<BOOTSTRAP DATA SET NO.2 NAME E.G. MQ.VCMA.BSDS02>}) -
+   BSDS(\textbf{<DUAL BOOTSTRAPS? Y OR N>}) -
+   SLEEP(\textbf{<SLEEP PERIOD BETWEEN CHECKS IN SECONDS>})
+   BACKUP(\textbf{<TAKE BACKUPS? Y OR N>}) -
+   RUNTYPE(\textbf{<O - ONCE, C - CONTINUOUS>}) -
+   RESTARTRBA(\textbf{<RESTART RELATIVE BYTE ADDRESS>}) -
+   DELPURGE(\textbf{<USE DELETE PURGE? Y or N>})
+/*
+\end{Verbatim}
+
+You will need one copy of this job for each queue manager you wish to
+run it against.
+\begin{enumerate}
+\item Replace <jobcard> with valid job details for your system
+\item Replace <MA19.LOADLIB> with the fully qualified name of the MA19
+SupportPac load library.
+\item Replace <MS15 HIGH LEVEL QUALIFIERS> with the high level qualifiers
+of the MS15 SupportPac data sets.
+\item Replace <MQSERIES HIGH LEVEL QUALIFIERS> with the high level
+qualifiers of the MQSeries for MVS/ESA data sets.
+\item Replace <QUEUE MANAGER NAME E.G. VCMA> with the name of the queue
+manager whose archive logs the exec will be monitoring.
+\item Replace <MQSERIES HIGH LEVEL QUALIFIERS E.G. MQ.V210> with the high
+level qualifiers of the MQSeries for MVS/ESA data sets.
+\item Replace <BOOTSTRAP DATA SET NO.1 NAME E.G. MQ.VCMA.BSDS01> with the
+name of your 1st bootstrap data set.
+\item If you have a 2nd bootstrap data set, then replace
+<BOOTSTRAP DATA SET NO.2 NAME E.G. MQ.VCMA.BSDS02> with the name of
+your 2nd bootstrap data set, otherwise delete this particular record fro
+the job.
+\item If you are using dual bootstrap data sets for this queue manager,
+then replace <DUAL BOOTSTRAPS? Y OR N> with Y, otherwise replace it with
+N.  It is essential that this parameter is set correctly otherwise it
+could result in dual bootstrap data sets becoming inconsistent.
+\item Replace <SLEEP PERIOD BETWEEN CHECKS IN SECONDS> with the time in
+seconds that you want the exec to sleep between checking the status of
+the archive logs, for example, 300 will cause it to sleep for 5 minutes.
+\item If you want the exec to start your backup procedures, you need to do
+the following:
+\begin{enumerate}
+\item Edit MNGLOGS EXEC, and change the perform\_backups routine at the
+very bottom of the exec to run your backup procedures.  The backups
+should include:
+\begin{itemize}
+\item Pagesets
+\item Bootstrap datasets
+\item Active logs
+\item Archive logs
+\item Object definitions if you need to keep them independently.
+\end{itemize}
+
+To drive the backups, the exec uses two variables to hold the restart
+relative byte address: 
+
+\begin{description}
+\item [Variable] Content
+\item [restart\_rba] The restart RBA in hexadecimal.
+\item [decimal\_restart\_rba] The restart RBA in decimal.
+\end{description}
+
+\item In MNGLOGSJ replace <TAKE BACKUPS? Y OR N> with Y.
+\end{enumerate}
+\item If you do not want MNGLOGS to start your backup procedures, replace
+<TAKE BACKUPS? Y OR N> with N.
+\item If you want the exec to check the archive logs once only i.e. check
+and delete any redundant archive logs, and then terminate, replace
+<O - ONCE, C - CONTINUOUS> with O.  If however you want the exec to
+run continuously in parallel with the queue manager then replace
+<O - ONCE, C - CONTINUOUS>with C.
+\item If you want to specify to MNGLOGS the restart RBA you want it to
+start with then replace <RESTART RELATIVE BYTE ADDRESS> with the restart
+RBA you want it to use in hexadecimal notation, for example:
+6DF37FFFF.  This is an alternative way for you to tie the exec into your
+backup procedures.  If you do not want to use this parameter, remove it
+from the JCL, and remove the continuation mark '-' from the end of the
+previous line.
+\item If you want to delete archives, regardless of the retention period
+specified for the dataset (ARCRETN in CSQ6ARVP for ZPARMS).  Use the
+operand DELPURGE(Y), so that a DELETE dsn PURGE command is used.
+\end{enumerate}
+%***********************************************************************
+\subsection{SLEEP function}
+%***********************************************************************
+%
+The USS services sleep() function is now used instead of the SLEEP
+module described in the following paragraph.
+
+A TSO sleep function is provided with this SupportPac, which enables
+the exec to sleep (i.e. Not use any system resources) for a specified
+period.  The source for this function (SLEEP) and sample JCL to build
+it (SLEEPJ) can be found in the MS15.SOURCE data set.
+%***********************************************************************
+\chapter{What it does}
+%***********************************************************************
+The exec is intended to manage archive logs on disk so that you only
+keep the ones MQSeries needs to be able to recover from a failure or
+backout incomplete work, however there are certain disaster scenarios,
+for instance pageset damage, which might require you to recover from
+archive logs which are no longer necessary to recover a clean system.
+It is therefore vital that you consider backing up your archive logs
+along with your pagesets, bootstrap data sets, and active logs, before
+deleting them from your main storage, to this end the exec has been
+written to allow you to tie it in with your backup procedures.
+
+The exec can be run in one of two modes:
+\begin{enumerate}
+\item Once only:
+
+Delete any redundant archive logs and then stop.
+\item Continuous execution:
+
+For as long as the queue manager is running, every so many seconds,
+delete any redundant archive logs and then sleep.This allows you to
+keep mainline DASD usage to the minimum required by the queue manager.
+\end{enumerate}
+
+You can tie the exec into your backup procedures in one of two
+ways:
+\begin{enumerate}
+\item By specifying as a parameter the Restart Relative Byte Address (RBA)
+you have used for your backups, and running the exec in the "Once only"
+mode.
+\item By specifying the backup parameter as "Y".  This will cause the
+exec to run a subroutine called perform\_backups.  You should tailor
+this subroutine to execute your backup procedures.
+\end{enumerate}
+
+The exec performs the following processing:
+\begin{enumerate}
+\item Determines whether the queue manager is active, and if it is:
+\begin{enumerate}
+\item Using either the MQSeries DISPLAY USAGE command, or the RESTARTRBA
+parameter, determines the restart RBA
+(Relative Byte Address) to be used to determine which archive logs can
+be deleted.
+\item If requested, it runs the routine which can be tailored to run your
+backup procedures.
+\item Using the CSQJU004 utility shipped with MQSeries for MVS/ESA,
+it determines what archive logs the queue manager has produced.
+\item It Determines which of the archive logs are out of date with respect
+to the restart RBA and deletes them.  DELETE PURGE may be used to
+override dataset expiration processing, if DELPURGE(Y) parameter has
+been specified.
+\item The DELETE is recorded as successful if either, it completes with
+return code zero, or, it only fails because the entry is not found (it
+has already been deleted).  In other situations, the error messages
+resulting from the failed delete are printed.
+
+:note.It is not possible at this point in time to remove the references
+to the deleted archive logs from the bootstrap data sets as MQSeries has
+an exclusive lock on the BSDS.
+\item It then goes to sleep for the specified period.
+\item Repeats the above steps, unless you have specified that it should
+only perform them once.
+\end{enumerate}
+\item When the queue manager is found to be no longer active and if
+there have been successful deletions, then
+the
+CSQJU003 utility is used to update the bootstrap data sets, removing the
+references to the deleted archive logs from them.
+\end{enumerate}
+\section{Possible Extensions}
+The process\_archives routine could be extended to use the LISTDSI
+function to determine the current location of archive logs.
+Once established, the routine could use \verb!HMIGRATE! to cause
+HSM to migrate newly created archive logs, or \verb!HDELETE! instead
+of \verb!DELETE! to delete old logs without causing them to be
+recalled first.
+\end{document}

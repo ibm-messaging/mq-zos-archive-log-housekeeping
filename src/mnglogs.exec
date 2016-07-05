@@ -1,0 +1,1103 @@
+/**********************************************************************/
+signal on SYNTAX NAME termSyntaxHandler                         /*@P1A*/
+/* MNGLOGS EXEC                                                       */
+/**********************************************************************/
+/*                                                                    */
+/* Copyright (c) 2016 IBM Corporation and other Contributors.         */
+/*                                                                    */
+/* All rights reserved. This program and the accompanying materials   */
+/* are made available under the terms of the Eclipse Public License   */
+/* v1.0 which accompanies this distribution, and is available at      */
+/* http://www.eclipse.org/legal/epl-v10.html                          */
+/*                                                                    */
+/**********************************************************************/
+/* Initial spec.:                                                     */
+/*                                                                    */
+/* Do forever;                                                        */
+/*    Obtain a map of the logs for the specified queue manager;       */
+/*                                                                    */
+/*    From the map, obtain the restart RBA (Relative Byte Address);   */
+/*                                                                    */
+/*    For each archive log older then the restart RBA;                */
+/*       Delete the archive log;                                      */
+/*       Remove the details of the archive log from the bootstrap     */
+/*       datasets;                                                    */
+/*    End;                                                            */
+/*                                                                    */
+/*    Sleep for a specified period;                                   */
+/* End;                                                               */
+/*                                                                    */
+/**********************************************************************/
+/* Actual Design:                                                     */
+/*                                                                    */
+/* Verify parameters;                                                 */
+/*                                                                    */
+/* From the specified PROC, obtain the required details eg. the names */
+/* of the bootstrap datasets;                                         */
+/*                                                                    */
+/* IF running once only THEN DO;                                      */
+/*   Using support pack MA19, and command DISPLAY USAGE, obtain the   */
+/*   restart RBA for the subsystem;                                   */
+/*                                                                    */
+/*   IF backing up THEN run the backups now;                          */
+/*                                                                    */
+/*   Using utility CSQJU004 obtain the map of the logs from the       */
+/*   bootstrap datasets;                                              */
+/*                                                                    */
+/*   Process any archive logs listed in the map:                      */
+/*     If the restart RBA is greater than the end RBA for an archive  */
+/*     log then:                                                      */
+/*       Delete it;                                                   */
+/*       Delete the associated bootstrap dataset copy;                */
+/* END;                                                               */
+/* ELSE DO;                                                           */
+/*   DO WHILE the subsystem is active;                                */
+/*     Using support pack MA19, and command DISPLAY USAGE, obtain the */
+/*     restart RBA for the subsystem;                                 */
+/*                                                                    */
+/*     IF backing up THEN run the backups now;                        */
+/*                                                                    */
+/*     Using utility CSQJU004 obtain the map of the logs from the     */
+/*     bootstrap datasets;                                            */
+/*                                                                    */
+/*     Process any archive logs listed in the map:                    */
+/*       If the restart RBA is greater than the end RBA for an archive*/
+/*       log then:                                                    */
+/*         Delete it;                                                 */
+/*         Delete the associated bootstrap dataset copy;              */
+/*                                                                    */
+/*     Sleep for a specified period;                                  */
+/*   END;                                                             */
+/* END;                                                               */
+/*                                                                    */
+/* If any archive logs were deleted then:                             */
+/*   remove references to them from the bootstrap data set(s).        */
+/*                                                                    */
+/**********************************************************************/
+/* Syntax:                                                            */
+/*   MNGLOGS QMGR(<queue manager name>)                               */
+/*           HLQS(<SCSQAUTH high level qualifiers>)                   */
+/*           LOG(<Y or N>)                                            */
+/*           BSDS(<Y or N>)                                           */
+/*           BS1(<Bootstrap 1 data set name>)                         */
+/*           BS2(<Bootstrap 2 data set name>)                         */
+/*           SLEEP(<Period between checks in seconds>)                */
+/*           BACKUP(<Y or N>)                                         */
+/*           RUNTYPE(<C or O>)                                        */
+/*           DELPURGE(Y or N)                                         */
+/*        RESTARTRBA(<restart_rba>)                                   */
+/*                                                                    */
+/* Where:                                                             */
+/*       QMGR    : The name of the queue manager, i.e. the up to 4    */
+/*                 characters before "MSTR" on the main proc.         */
+/*       HLQS    : The high level qualifiers for the SCSQAUTH library */
+/*       BSDS    : N - single bootstrap                               */
+/*                 Y - dual bootstrap (Default)                       */
+/*       BS1     : The full name of the first bootstrap data set      */
+/*       BS2     : The full name of the second bootstrap data set     */
+/*       SLEEP   : The period in seconds (Default 300) which the exec */
+/*                 will wait between checks of the archived logs      */
+/*       BACKUP  : Will call a tailorable routine to start backups    */
+/*                 of MQSeries pagesets, logs etc.:                   */
+/*                 N - Backup routine will not be called.             */
+/*                 Y - Backup routine will be called. (Default)       */
+/*       RUNTYPE : O - Just deal with the archive logs once and then  */
+/*                     stop.                                          */
+/*                 C - Run continuously in parallel with the queue    */
+/*                     manager, dealing with the archive logs at the  */
+/*                     interval specified by SLEEP. (Default)         */
+/*    RESTARTRBA : The restart Relative Byte Address (RBA) you wish   */
+/*                 to base your backups and deletion of archives on,  */
+/*                 specified in hex, as given by the DISPLAY USAGE    */
+/*                 command, e.g. 6DF37FFFF.  If you are happy for the */
+/*                 exec to work out the restart RBA to use itself,    */
+/*                 then do not use this parameter.                    */
+/*      DELPURGE : The DELETE of archive logs and bsds uses the       */
+/*                 PURGE option to bypass expiration date processing  */
+/*                                                                    */
+/**********************************************************************/
+/* History:                                                           */
+/*                                                                    */
+/*    Name            Date                  Comments                  */
+/* M.A.Butcher      18/11/1998  Genesis                               */
+/* M.A.Butcher      23/11/1998  Add susbsys. name to temp dataset.    */
+/* M.A.Butcher      15/12/1998  Bootstrap names might be a JCL var.   */
+/* M.A.Butcher      07/01/1999  Update the bootstrap on termination.  */
+/* M.A.Butcher      19/10/1999  Obtain all reqd. info. from parms.    */
+/* M.A.Butcher      05/11/1999  Tie in with backup mechanisms.        */
+/* M.A.Butcher      10/12/1999  Restart_RBA as a parameter.           */
+/* £P1= 69748       020401 RF  : Fixup for new V5.3 messages          */
+/* £P2= 69748       020916 PS  : Use USS sleep function               */
+/* £P3= 92928       050404 PS  : Add PURGE option to archive delete   */
+/* £P4= 92928       050404 PS  : Trap DELETE error messages and displ */
+/* £P5= 52045       140227 PSD : Handle 8 byte RBAs                   */
+/*                                                                    */
+/**********************************************************************/
+rc = syscalls('ON') ;  /* See Using REXX and USS SC28-1905 BPX    @P2A*/
+if (rc != 0) then do                                            /*@P2A*/
+   say "Syscalls not available from USS" ;                      /*@P2A*/
+   exit 8 ;                                                     /*@P2A*/
+end                                                             /*@P2A*/
+
+ARG parm_string;
+db2ormq = "MQ"; /* Currently support MQSeries only.                   */
+
+/**********************************************************************/
+/* Set very high precision, given the potential size of RBA numbers.  */
+/**********************************************************************/
+NUMERIC DIGITS 15;
+
+/**********************************************************************/
+/* Verify the given parameters.                                       */
+/**********************************************************************/
+CALL verify_parameters;
+
+/**********************************************************************/
+/* Initialise some variables.                                         */
+/**********************************************************************/
+initialSleepTime = sleep ;                                      /*@P1C*/
+user             = USERID();
+mapds            = user"."qmgr"."db2ormq".LOG.MAP";
+listds           = user"."qmgr"."db2ormq".DS.LIST";
+ju003ds          = user"."qmgr"."db2ormq".JU003.OUT";
+no_of_archives   = 0;
+parm.QM          = qmgr;  /* QMGR Parameter for RXMQVC.               */
+parm.TO          = 30000; /* Timeout Parameter for RXMQVC.            */
+command          = "DISPLAY USAGE"; /* Parameter for RXMQVC.          */
+deleted.         = ""; /* Record of deleted archives.                 */
+logs_deleted     = 0;  /* Count of deleted archives.                  */
+
+/**********************************************************************/
+/* Check whether the subsystem is actually running, we may want       */
+/* sleep for a short period before doing this, to allow the user time */
+/* to start the subsystem.                                            */
+/**********************************************************************/
+IF initialSleepTime > 0 & runtype = "C" THEN DO;
+  SAY "Sleeping for" initialSleepTime "seconds to allow qmgr to come up";
+  address SYSCALL "SLEEP "initialSleepTime;                     /*@P2C*/
+END;
+
+/**********************************************************************/
+/* Verify that the specified restart RBA is less than or equal to the */
+/* actual restart RBA.  This can only be done if the queue manager is */
+/* active.                                                            */
+/**********************************************************************/
+CALL subsystem_status;
+
+IF parm_restart_rba <> "" THEN DO;
+  IF subsystem_status = "ACTIVE" THEN DO;
+    SAY "Checking current restart RBA to verify specified restart RBA";
+    CALL get_restart_rba;
+    IF decimal_parm_restart_rba > decimal_restart_rba THEN DO;
+      SAY "Specified restart RBA is greater than the current restart RBA";
+      SIGNAL Terminate;
+    END;
+    ELSE DO;
+      restart_rba = parm_restart_rba;
+      decimal_restart_rba = decimal_parm_restart_rba;
+      SAY "Specified restart RBA being used:";
+      SAY "   hexadecimal : "restart_rba;
+      SAY "       decimal : "decimal_restart_rba;
+    END;
+  END;
+  ELSE DO;
+    SAY "Unable to confirm whether specified restart RBA is less than";
+    SAY "or equal to the restart RBA of the queue manager as it is not";
+    SAY "currently active.";
+    SIGNAL Terminate;
+  END;
+END;
+
+/**********************************************************************/
+/* Only processing the archive logs once.                             */
+/**********************************************************************/
+IF runtype = "O" THEN DO;
+  IF restart_rba = 0 THEN
+    CALL get_restart_rba; /* Use DISPLAY USAGE command.               */
+
+  IF restart_rba > 0 THEN DO;
+    IF backup = "Y" THEN CALL perform_backups; /* Run backups         */
+
+    CALL get_log_map; /* Use appropriate product utility.             */
+
+    CALL process_archives;
+  END;
+END;
+/**********************************************************************/
+/* Running in parallel with the queue manager.                        */
+/**********************************************************************/
+ELSE DO;
+  /********************************************************************/
+  /* Monitor the archive logs for as long as the subsystem is active, */
+  /* sleeping for the specified period between each check.            */
+  /********************************************************************/
+  DO WHILE subsystem_status = "ACTIVE";
+    IF restart_rba = 0 THEN
+      CALL get_restart_rba; /* Use DISPLAY USAGE command.             */
+
+    IF restart_rba > 0 THEN DO;
+      IF backup = "Y" THEN CALL perform_backups; /* Run backups       */
+
+      CALL get_log_map; /* Use appropriate product utility.           */
+
+      CALL process_archives;
+      restart_rba = 0; /* Reset to force it to be checked next time.  */
+    END;
+
+    /******************************************************************/
+    /* Sleep for the specified period.                                */
+    /******************************************************************/
+    SAY "Sleeping for "sleep" second(s) from "TIME()" on "DATE("S");
+    SAY "*************************************************************";
+    address SYSCALL "SLEEP "sleep;                              /*@P2C*/
+    SAY "Awoke at "TIME()" on "DATE("S");
+
+    /******************************************************************/
+    /* Check whether the subsystem is still active, there is no point */
+    /* in continuing if it has been shutdown.                         */
+    /******************************************************************/
+    CALL subsystem_status;
+  END;
+END;
+
+/**********************************************************************/
+/* Remove references to the deleted archives from the bootstrap       */
+/* datasets now that the queue manager has come down.                 */
+/**********************************************************************/
+IF logs_deleted > 0 THEN
+  CALL update_bootstraps;
+ELSE
+  SAY "No archive logs deleted, no need to update bootstraps";
+
+Terminate:
+/**********************************************************************/
+/* Delete the map dataset.                                            */
+/**********************************************************************/
+rc = MSG(OFF);
+"DELETE '"mapds"'";
+rc = MSG(ON);
+
+EXIT;
+
+
+
+
+/**********************************************************************/
+/* Verify the specified parameters, and set defaults where parameters */
+/* have not been specified.                                           */
+/**********************************************************************/
+verify_parameters:
+/**********************************************************************/
+/* Define default values first.                                       */
+/**********************************************************************/
+qmgr             = "";
+hlqs             = "";
+bsds1            = "";
+bsds2            = "";
+dualbsds         = "Y";
+sleep            = 300;
+backup           = "Y";
+runtype          = "C";
+parm_restart_rba = "";
+restart_rba      = 0;
+delpval          = "N";                                         /*@P3A*/
+
+/**********************************************************************/
+/* Now process the parameters.                                        */
+/**********************************************************************/
+PARSE VALUE parm_string WITH next rest;
+DO WHILE next <> "";
+  SELECT;
+    WHEN LEFT(next,4) = "QMGR" THEN DO;
+       PARSE VALUE next WITH "QMGR("qmgr")" .;
+       subsystem = qmgr"MSTR";
+    END;
+    WHEN LEFT(next,4) = "HLQS" THEN DO;
+       PARSE VALUE next WITH "HLQS("hlqs")" .;
+       authlib = hlqs".SCSQAUTH";
+    END;
+    WHEN LEFT(next,3) = "BS1" THEN DO;
+       PARSE VALUE next WITH "BS1("bsds1")" .;
+    END;
+    WHEN LEFT(next,3) = "BS2" THEN DO;
+       PARSE VALUE next WITH "BS2("bsds2")" .;
+    END;
+    WHEN LEFT(next,4) = "BSDS" THEN DO;
+       PARSE VALUE next WITH "BSDS("dualbsds")" .;
+    END;
+    WHEN LEFT(next,5) = "SLEEP" THEN DO;
+       PARSE VALUE next WITH "SLEEP("sleep")" .;
+    END;
+    WHEN LEFT(next,6) = "BACKUP" THEN DO;
+       PARSE VALUE next WITH "BACKUP("backup")" .;
+    END;
+    WHEN LEFT(next,7) = "RUNTYPE" THEN DO;
+       PARSE VALUE next WITH "RUNTYPE("runtype")" .;
+    END;
+    WHEN LEFT(next,10) = "RESTARTRBA" THEN DO;
+       PARSE VALUE next WITH "RESTARTRBA("parm_restart_rba")" .;
+    END;
+    when left(next,8) = "DELPURGE" then do                     /* @P3A*/
+       parse value next with "DELPURGE("delpval")" . ;
+    end
+    OTHERWISE DO;
+       SAY "Invalid parameter : "next;
+       SIGNAL Terminate;
+    END;
+  END;
+  PARSE VALUE rest WITH next rest;
+END;
+
+/**********************************************************************/
+/* Now validate the parameters.                                       */
+/**********************************************************************/
+IF DATATYPE(sleep) <> "NUM" THEN DO;
+  SAY "Specified sleep duration is non-numeric";
+  SIGNAL Terminate;
+END;
+
+IF qmgr = "" THEN DO;
+  SAY "A queue manager name has not been specified";
+  SIGNAL Terminate;
+END;
+
+IF hlqs = "" THEN DO;
+  SAY "The HLQs for the SCSQAUTH library have not been specified";
+  SIGNAL Terminate;
+END;
+
+IF bsds1 = "" THEN DO;
+  SAY "The name of the first bootstrap data set has not been specified";
+  SIGNAL Terminate;
+END;
+
+IF dualbsds <> "N" & dualbsds <> "Y" THEN DO;
+  SAY "BSDS parameter specified incorrectly: "dualbsds;
+  SAY "should be Y or N";
+  SIGNAL Terminate;
+END;
+
+IF backup <> "N" & backup <> "Y" THEN DO;
+  SAY "BACKUP parameter specified incorrectly: "backup;
+  SAY "should be Y or N";
+  SIGNAL Terminate;
+END;
+
+IF runtype <> "C" & runtype <> "O" THEN DO;
+  SAY "RUNTYPE parameter specified incorrectly: "runtype;
+  SAY "should be C or O";
+  SIGNAL Terminate;
+END;
+
+IF dualbsds = "Y" & bsds2 = "" THEN DO;
+  SAY "Use of dual bootstraps has been specified, but the name of";
+  SAY "the second bootstrap data set has not been provided";
+  SIGNAL Terminate;
+END;
+
+IF parm_restart_rba <> "" THEN DO;
+  IF DATATYPE(parm_restart_rba,"X") = 1 THEN DO;
+    decimal_parm_restart_rba = X2D(parm_restart_rba);
+  END;
+  ELSE DO;
+    SAY "Specified restart RBA is not a valid hex number";
+    SIGNAL Terminate;
+  END;
+END;
+
+if (delpval <>"Y") & (delpval<>"N") then do                  /* @P3A*/
+   say "DELPURGE, if present, must specify Y or N, value is" delpval ;
+   signal terminate ;
+end
+if delpval = "Y" then do                                       /* @P3A*/
+   purgeopt = "PURGE" ;
+end
+else
+   purgeopt = "" ;
+
+SAY "Details:";
+SAY "  Queue manager   : "qmgr;
+SAY "  Auth. Library   : "authlib;
+SAY "  Dual bootstraps : "dualbsds;
+SAY "  1st Bootstrap   : "bsds1;
+IF dualbsds = "Y" THEN
+  SAY "  2nd Bootstrap   : "bsds2;
+SAY "  Sleep period    : "sleep;
+SAY "  Backup          : "backup;
+IF runtype = "O" THEN
+  SAY "  Runtype         : O = Once only";
+ELSE
+  SAY "  Runtype         : C = Continuously in parallel with the Qmgr";
+IF parm_restart_rba <> "" THEN
+  SAY "  Restart_RBA     : "parm_restart_rba;
+ELSE
+  SAY "  Restart_RBA     : Not specified, will be established by DISPLAY USAGE";
+say "  Archive deletion uses PURGE, Y or N :" delpval ;
+SAY "*************************************************************";
+RETURN;
+
+
+
+
+/**********************************************************************/
+/* Determine whether or not the subsystem is currently active.        */
+/**********************************************************************/
+subsystem_status:
+subsystem_status = "INACTIVE";
+status. = "";
+res = OUTTRAP("STATUS.","*","NOCONCAT");
+"STATUS "subsystem;
+res = OUTTRAP("OFF");
+DO j = 1 TO status.0;
+  IF POS("EXECUTING",status.j) > 0 THEN DO;
+    subsystem_status = "ACTIVE";
+  END;
+END;
+
+IF subsystem_status = "ACTIVE" THEN
+  SAY "Subsystem "subsystem" is active";
+ELSE
+  SAY "Subsystem "subsystem" is not active";
+
+RETURN;
+
+
+
+
+get_restart_rba:
+/**********************************************************************/
+/* Obtain the restart RBA (Relative Byte address):                    */
+/* For MQSeries by:                                                   */
+/*    Using support pack MA19, the load module for which, RXMQVC      */
+/*    is in VIC.RR.AUTHLIB.                                           */
+/* For DB2 by:                                                        */
+/*    ???????????????????????????????????????????????????????????     */
+/**********************************************************************/
+SAY "Obtaining the retstart RBA from the subsystem";
+/**********************************************************************/
+/* For MQSeries.                                                      */
+/**********************************************************************/
+IF db2ormq = "MQ" THEN DO;
+  resp. = "";
+  restart_rba = 0;
+  decimal_restart_rba = 0;
+
+  /********************************************************************/
+  /* Initialise RXMQVC.                                               */
+  /********************************************************************/
+  rcc = RXMQVC("INIT");
+  IF SUBSTR(rcc,1,19) <> "0 0 0 RXMQVCINIT OK" THEN DO;
+    SAY "RXMQVC failed to initialise, with this message:";
+    SAY rcc;
+    SIGNAL Terminate;
+  END;
+
+  /********************************************************************/
+  /* Issue DISPLAY USAGE to the queue manager.                        */
+  /********************************************************************/
+  /* timeout is in parm.TO  other possible stems of parm are:         */
+  /*                   .CQ  name of command q (SYSTEM.COMMAND.INPUT   */
+  /*                   .RQ  reply model (SYSTEM.COMMAND.REPLY.MODEL)  */
+  /*                   .QM  default qmgr  (for details see MA19 doc   */
+  /********************************************************************/
+  rcc = RXMQVC("COMMAND","parm.",command,"resp.");
+  IF SUBSTR(rcc,1,19) <> "0 0 0 RXMQVCCOMM OK" THEN DO;
+    /******************************************************************/
+    /* Occasionally we might not get a response from the queue        */
+    /* manager, and will be given a 2033, in this situation, we       */
+    /* just try again the next time around, there is no need to       */
+    /* abort the whole thing.                                         */
+    /* If we get a 2161, then the queue manager is quiescing, so we   */
+    /* can stop.                                                      */
+    /******************************************************************/
+    SELECT
+      WHEN SUBSTR(rcc,1,4) = 2033 THEN DO;
+        SAY "RXMQVC gave rc = 2033, ignoring";
+        rcc = 2033;
+        restart_rba = 0;
+        decimal_restart_rba = 0;
+      END;
+      WHEN SUBSTR(rcc,1,4) = 2161 THEN DO;
+        SAY "RXMQVC gave rc = 2161, queue manager is quiescing";
+      END;
+      OTHERWISE DO;
+        SAY "RXMQVC failed, with this message:";
+        SAY rcc;
+        SIGNAL Terminate;
+      END;
+    END;
+  END;
+
+  /********************************************************************/
+  /* IF rcc is not 2033, then we have valid output from DISPLAY USGAE,*/
+  /* and can find the restart RBA in message CSQI024I.                */
+  /********************************************************************/
+  IF rcc <> 2033 THEN DO;
+    DO i = 1 TO resp.0;
+      IF SUBSTR(resp.i,1,8) = "CSQI024I" THEN DO;
+        j = i + 1;
+        PARSE UPPER VAR resp.j WITH "CONFIGURED=" restart_rba .;/*@P1C*/
+        decimal_restart_rba = X2D(restart_rba);
+        SAY "Restart RBA           = "restart_rba;
+        SAY "Restart RBA (Decimal) = "decimal_restart_rba;
+      END;
+    END;
+  END;
+
+  /********************************************************************/
+  /* Terminate RXMQVC.                                                */
+  /********************************************************************/
+  rcc = RXMQVC("TERM");
+  IF SUBSTR(rcc,1,19) <> "0 0 0 RXMQVCTERM OK" THEN DO;
+    SAY "RXMQVC failed to terminate, with this message:";
+    SAY rcc;
+    SIGNAL Terminate;
+  END;
+END;
+/**********************************************************************/
+/* For DB2.                                                           */
+/**********************************************************************/
+ELSE DO;
+END;
+RETURN;
+
+
+
+
+/**********************************************************************/
+/* Using the CSQJU004 utility, obtain a map of the susbsystem logs    */
+/* from the bootstrap dataset.                                        */
+/**********************************************************************/
+get_log_map:
+/**********************************************************************/
+/* Delete any existing map dataset.                                   */
+/**********************************************************************/
+rc = MSG(OFF);
+"DELETE '"mapds"'";
+rc = MSG(ON);
+
+/**********************************************************************/
+/* Create a dataset into which the map will be written by the         */
+/* print log map utility.                                             */
+/**********************************************************************/
+SAY "Obtaining the log map from the bootstrap dataset "bsds1;
+"ATTRIB NEWFILE LRECL(125) BLKSIZE(629) RECFM(V B) DSORG(PS)";
+"ALLOC F(SYSPRINT) DSN('"mapds"')",
+  "NEW REUSE USING(NEWFILE) SPACE(100,100)";
+IF rc <> 0 THEN DO;
+  SAY "Error allocating "mapds", rc = "rc;
+  "FREE ATTRLIST(NEWFILE)";
+  SIGNAL Terminate;
+END;
+ELSE "FREE ATTRLIST(NEWFILE)";
+
+/**********************************************************************/
+/* Read the map into memory.                                          */
+/**********************************************************************/
+IF db2ormq = "MQ" THEN DO;
+  "ALLOC F(SYSUT1) DSN('"bsds1"') SHR REUSE";
+  "CALL '"authlib"(CSQJU004)'";
+  IF rc <> 0 THEN DO;
+    SAY "Error running CSQJU004, rc = "rc;
+    "FREE F(SYSPRINT)";
+    "FREE F(SYSUT1)";
+    SIGNAL Terminate;
+  END;
+  ELSE DO;
+    "FREE F(SYSPRINT)";
+    "FREE F(SYSUT1)";
+  END;
+END;
+ELSE DO;
+END;
+
+maprec.="";
+"ALLOC F(MAPIN) DSN('"mapds"') SHR REUSE";
+"EXECIO * DISKR MAPIN (FINIS STEM MAPREC.";
+"FREE F(MAPIN)";
+
+show = 0                                                        /*@P1A*/
+do i = 1 to maprec.0                                            /*@P1A*/
+  if pos( 'ARCHIVE LOG COPY 1 DATA SETS', maprec.i ) > 0 then   /*@P1A*/
+    show = 1                                                    /*@P1A*/
+  else                                                          /*@P1A*/
+    if pos( 'ACTIVE LOG COPY 2 DATA SETS', maprec.i ) > 0 then  /*@P1A*/
+      show = 0                                                  /*@P1A*/
+  if show then                                                  /*@P1A*/
+    say maprec.i                                                /*@P1A*/
+end                                                             /*@P1A*/
+RETURN;
+
+
+
+
+/**********************************************************************/
+/* From the map, identify the archive logs and process them.          */
+/**********************************************************************/
+process_archives:
+/**********************************************************************/
+/* For each archive log listed in the map, determine whether it       */
+/* is older than the restart RBA, if this is the case, then           */
+/* delete the archive log, and remove any reference to it from        */
+/* the bootstrap dataset.                                             */
+/**********************************************************************/
+arclog1_count = 0;
+arclog1.      = "";
+arclog1.srba  = "";
+arclog1.erba  = "";
+arclog2_count = 0;
+arclog2.      = "";
+arclog2.srba  = "";
+arclog2.erba  = "";
+
+/**********************************************************************/
+/* Find the start of the first set of archive details.                */
+/**********************************************************************/
+i = 0;
+DO UNTIL POS("ARCHIVE LOG COPY 1",maprec.i) > 0 | i > maprec.0;
+  i = i + 1;
+END;
+IF i < maprec.0 THEN DO; /* ARCHIVE LOG COPY 1 found.                 */
+  i = i + 1;
+  IF POS("NO ARCHIVE",maprec.i) = 0 THEN DO; /* There are archives.   */
+    DO UNTIL POS("ACTIVE LOG COPY 2",maprec.i) > 0,
+    | i > maprec.0;
+      i = i + 1;
+      IF POS("DSN=",maprec.i) > 0 THEN DO; /* Log entry.              */
+/*      PARSE VALUE maprec.i WITH . a b . "DSN=" c .;             @P1D*/
+        arclog1_count = arclog1_count + 1;                      /*@P1C*/
+        
+        /* Not interested in format of logs prior to 5.3... just going*/
+        /* to support new format, which looks a bit like this:        */
+        /* 0000000000000000 /   00000000000C9FFF /  2014-02-26 DSN=xx */
+        /* RBA could either be 6 or 8 bytes                           */
+        /* Watch out though as line might have a extra character at   */
+        /* the front, so always skip that...                          */
+        maprec.i = substr( maprec.i, 2 )                        /*@P1A*/
+
+        arclog1.srba.arclog1_count = word(maprec.i,1)
+        arclog1.erba.arclog1_count = word(maprec.i,3)
+        parse var maprec.i . 'DSN=' arclog1.arclog1_count       /*@P1A*/
+        arclog1.arclog1_count = strip( arclog1.arclog1_count )  /*@P1A*/
+      END; /* Log entry.                                              */
+    END;
+
+    /******************************************************************/
+    /* Find the start of the second set of archive details.           */
+    /******************************************************************/
+    DO UNTIL POS("ARCHIVE LOG COPY 2",maprec.i) > 0,
+    | i > maprec.0;
+      i = i + 1;
+    END;
+    IF i < maprec.0 THEN DO; /* ARCHIVE LOG COPY 2 found.             */
+      i = i + 1;
+      IF POS("NO ARCHIVE",maprec.i) = 0 THEN DO; /* There are archives*/
+        DO UNTIL POS("CSQJ401E",maprec.i) > 0,
+        | i > maprec.0;
+          i = i + 1;
+          IF POS("DSN=",maprec.i) > 0 THEN DO; /* Log entry.          */
+/*          PARSE VALUE maprec.i WITH . a b . "DSN=" c .          @P1D*/
+            arclog2_count = arclog2_count + 1;                  /*@P1C*/
+
+        /* Not interested in format of logs prior to 5.3... just going*/
+        /* to support new format, which looks a bit like this:        */
+        /* 0000000000000000 /   00000000000C9FFF /  2014-02-26 DSN=xx */
+        /* RBA could either be 6 or 8 bytes                           */
+        /* Watch out though as line might have a extra character at   */
+        /* the front, so always skip that...                          */
+            maprec.i = substr( maprec.i, 2 )                    /*@P1A*/
+
+            arclog2.srba.arclog2_count = word(maprec.i,1)
+            arclog2.erba.arclog2_count = word(maprec.i,3)
+
+            parse var maprec.i . 'DSN=' arclog2.arclog2_count   /*@P1A*/
+            arclog2.arclog2_count = strip( arclog2.arclog2_count )
+          END; /* Log entry.                                          */
+        END;
+      END; /* There are archives.                                     */
+      ELSE DO; /* There are no COPY 2 archives, therefore single logs.*/
+        SAY "No COPY 2 archives currently defined.";
+      END; /* There are no COPY 2 archives, therefore single logs.    */
+    END; /* ARCHIVE LOG COPY 2 found.                                 */
+    ELSE DO;
+      SAY "No COPY 2 archive details found.";
+    END;
+  END; /* There are acrhives.                                         */
+  ELSE DO; /* There aren't any archives.                              */
+    SAY "No archive datasets currently defined";
+  END; /* There aren't any archives.                                  */
+END; /* ARCHIVE LOG COPY 1 found.                                     */
+ELSE DO; /* ARCHIVE LOG COPY 1 not found.                             */
+  SAY "No archive dataset details found in the log map";
+END; /* ARCHIVE LOG COPY 1 not found.                                 */
+
+/**********************************************************************/
+/* Archive logs have been identified, so process them.                */
+/**********************************************************************/
+IF arclog1_count > 0 | arclog2_count > 0 THEN DO;
+  /********************************************************************/
+  /* Delete any out of date archives, and remove any reference to them*/
+  /* from the bootstrap datasets.                                     */
+  /********************************************************************/
+  IF arclog1_count > 0 THEN SAY "LOG COPY 1 archives:";
+  DO i = 1 TO arclog1_count;
+    /******************************************************************/
+    /* Determine whether the archive has already been deleted during  */
+    /* this run.                                                      */
+    /******************************************************************/
+    j = 0;
+    DO UNTIL arclog1.i = deleted.j | j > logs_deleted;
+      j = j + 1;
+    END;
+
+    IF j > logs_deleted THEN DO;
+      bsdscopy = OVERLAY("B",arclog1.i,LENGTH(arclog1.i) - 7);
+      IF decimal_restart_rba > X2D(arclog1.erba.i) THEN DO; /* Delete */
+        start_delete = TIME();
+        z = outtrap("delmsgs.","*","NOCONCAT") ;               /* @P4C*/
+        "DELETE '"arclog1.i"'" purgeopt ;                      /* @P3C*/
+        delrc = rc ;                                           /* @P4A*/
+        rc = MSG(ON);
+        end_delete = TIME();
+        if delrc <> 0 then do                                  /* @P4A*/
+           parse value delmsgs.1 with "ENTRY" dsn reason ;
+           /* say '===' dsn '===:'reason':' */
+           if reason = "NOT FOUND+" then do
+                delrc = 0 ;
+           end
+        end                                                    /* @P4A*/
+        if delrc = 0 then do                                   /* @P4A*/
+          SAY RIGHT(i,3),
+            "DELETE",
+            arclog1.srba.i,
+            arclog1.erba.i,
+            arclog1.i,
+            start_delete,
+            end_delete;
+
+          /************************************************************/
+          /* Record the deletion of the log.                          */
+          /************************************************************/
+          logs_deleted = logs_deleted + 1;
+          deleted.logs_deleted = arclog1.i;
+        end ;
+        else do                   /* if del failed, prt errors    @P4A*/
+          say right(i,3),
+              "DELETE",
+              arclog1.i,
+              "failed, messages follow:" ;
+          do msg = 1 to delmsgs.0
+            say delmsgs.msg ;
+          end ;
+        end ;                                                  /* @P4A*/
+
+        /**************************************************************/
+        /* Delete the associated BSDS archive as well.                */
+        /**************************************************************/
+        start_delete = TIME();
+        z = outtrap("delmsgs.","*","NOCONCAT") ;               /* @P4C*/
+        "DELETE '"bsdscopy"'" purgeopt ;                       /* @P3C*/
+        delrc = rc ;                                           /* @P4A*/
+        rc = MSG(ON);
+        end_delete = TIME();
+        if delrc <> 0 then do
+           parse value delmsgs.1 with "ENTRY" dsn reason ;
+           /* say '===' dsn '===:'reason':' */
+           if reason = "NOT FOUND+" then do
+                delrc = 0 ;
+           end
+        end
+        if delrc = 0 then do                                   /* @P4A*/
+          SAY RIGHT(i,3),
+            "DELETE",
+            arclog1.srba.i,
+            arclog1.erba.i,
+            bsdscopy,
+            start_delete,
+            end_delete;
+        end ;
+        else do                   /* if del failed, prt errors    @P4A*/
+          say right(i,3),
+              "DELETE",
+              bsdscopy,
+              "failed, messages follow:" ;
+          do msg = 1 to delmsgs.0
+            say delmsgs.msg ;
+          end ;
+        end ;                                                  /* @P4A*/
+
+      END; /* Delete the archive.                                     */
+      ELSE DO;
+        SAY RIGHT(i,3),
+            "KEEP  ",
+            arclog1.srba.i,
+            arclog1.erba.i,
+            arclog1.i;
+        SAY RIGHT(i,3),
+            "KEEP  ",
+            arclog1.srba.i,
+            arclog1.erba.i,
+            bsdscopy;
+      END;
+    END;
+  END;
+
+  IF arclog2_count > 0 THEN SAY "LOG COPY 2 archives:";
+  DO i = 1 TO arclog2_count;
+    /******************************************************************/
+    /* Determine whether the archive has already been deleted during  */
+    /* this run.                                                      */
+    /******************************************************************/
+    j = 0;
+    DO UNTIL arclog2.i = deleted.j | j > logs_deleted;
+      j = j + 1;
+    END;
+
+    IF j > logs_deleted THEN DO;
+      bsdscopy = OVERLAY("B",arclog2.i,LENGTH(arclog2.i) - 7);
+      IF decimal_restart_rba > X2D(arclog2.erba.i) THEN DO; /* Delete */
+        start_delete = TIME();
+        z = outtrap("delmsgs.","*","NOCONCAT") ;               /* @P4C*/
+        "DELETE '"arclog2.i"'" purgeopt ;                      /* @P3C*/
+        delrc = rc ;                                           /* @P4A*/
+        rc = MSG(ON);
+        end_delete = TIME();
+        if delrc <> 0 then do
+           parse value delmsgs.1 with "ENTRY" dsn reason ;
+           /* say '===' dsn '===:'reason':' */
+           if reason = "NOT FOUND+" then do
+                delrc = 0 ;
+           end
+        end
+        if delrc = 0 then do                                   /* @P4A*/
+          SAY RIGHT(i,3),
+            "DELETE",
+            arclog2.srba.i,
+            arclog2.erba.i,
+            arclog2.i,
+            start_delete,
+            end_delete;
+
+          /************************************************************/
+          /* Record the deletion of the log.                          */
+          /************************************************************/
+          logs_deleted = logs_deleted + 1;
+          deleted.logs_deleted = arclog2.i;
+
+        end ;
+        else do                   /* if del failed, prt errors    @P4A*/
+          say right(i,3),
+              "DELETE",
+              arclog2.i,
+              "failed, messages follow:" ;
+          do msg = 1 to delmsgs.0
+            say delmsgs.msg ;
+          end ;
+        end ;                                                  /* @P4A*/
+
+        /**************************************************************/
+        /* Delete the associated BSDS archive as well.                */
+        /**************************************************************/
+        start_delete = TIME();
+        z = outtrap("delmsgs.","*","NOCONCAT") ;               /* @P4C*/
+        "DELETE '"bsdscopy"'" purgeopt ;                       /* @P3C*/
+        delrc = rc ;                                           /* @P4A*/
+        rc = MSG(ON);
+        end_delete = TIME();
+        if delrc <> 0 then do
+           parse value delmsgs.1 with "ENTRY" dsn reason ;
+           /* say '===' dsn '===:'reason':' */
+           if reason = "NOT FOUND+" then do
+                delrc = 0 ;
+           end
+        end
+        if delrc = 0 then do                                   /* @P4A*/
+          SAY RIGHT(i,3),
+            "DELETE",
+            arclog2.srba.i,
+            arclog2.erba.i,
+            bsdscopy,
+            start_delete,
+            end_delete;
+        end ;
+        else do                   /* if del failed, prt errors    @P4A*/
+          say right(i,3),
+              "DELETE",
+              arclog2.i,
+              "failed, messages follow:" ;
+          do msg = 1 to delmsgs.0
+            say delmsgs.msg ;
+          end ;
+        end ;                                                  /* @P4A*/
+      END; /* Delete the archive.                                     */
+      ELSE DO;
+        SAY RIGHT(i,3),
+            "KEEP  ",
+            arclog2.srba.i,
+            arclog2.erba.i,
+            arclog2.i;
+        SAY RIGHT(i,3),
+            "KEEP  ",
+            arclog2.srba.i,
+            arclog2.erba.i,
+            bsdscopy;
+      END;
+    END;
+  END;
+END;
+RETURN;
+
+
+
+
+/**********************************************************************/
+/* Update the bootstrap dataset(s), to remove references to the       */
+/* deleted archive logs.                                              */
+/**********************************************************************/
+update_bootstraps:
+SAY "Updating the bootstrap dataset(s), to remove refs. to deleted logs";
+
+/**********************************************************************/
+/* Delete any existing datasets.                                      */
+/**********************************************************************/
+rc = MSG(OFF);
+"DELETE '"listds"'";
+"DELETE '"ju003ds"'";
+rc = MSG(ON);
+
+/**********************************************************************/
+/* Create a dataset into which the delete commands will be written.   */
+/**********************************************************************/
+"ATTRIB NEWFILE LRECL(80) RECFM(F B) DSORG(PS)";
+"ALLOC F(LISTDS) DSN('"listds"')",
+  "NEW REUSE USING(NEWFILE) SPACE(100,100)";
+IF rc <> 0 THEN DO;
+  SAY "Error allocating "listds", rc = "rc;
+  "FREE ATTRLIST(NEWFILE)";
+  SIGNAL Terminate;
+END;
+ELSE "FREE ATTRLIST(NEWFILE)";
+
+/**********************************************************************/
+/* Create a dataset into which the map will be written by the         */
+/* print log map utility.                                             */
+/**********************************************************************/
+SAY "Obtaining the log map from the bootstrap dataset "bsds1;
+"ATTRIB NEWFILE LRECL(125) BLKSIZE(629) RECFM(V B) DSORG(PS)";
+"ALLOC F(SYSPRINT) DSN('"ju003ds"')",
+  "NEW REUSE USING(NEWFILE) SPACE(100,100)";
+IF rc <> 0 THEN DO;
+  SAY "Error allocating "ju003ds", rc = "rc;
+  "FREE ATTRLIST(NEWFILE)";
+  SIGNAL Terminate;
+END;
+ELSE "FREE ATTRLIST(NEWFILE)";
+
+/**********************************************************************/
+/* Produce the input to the CSQJU003 utility.                         */
+/**********************************************************************/
+SAY "Removing references to the following archives from the bootstrap(s)";
+DO i = 1 TO logs_deleted;
+  SAY deleted.i;
+  QUEUE "  DELETE DSNAME="deleted.i;
+  "EXECIO 1 DISKW LISTDS";
+END;
+"EXECIO 0 DISKW LISTDS (FINIS";
+"FREE F(LISTDS)";
+
+/**********************************************************************/
+/* Now allocate the datasets required by CSQJU003.                    */
+/**********************************************************************/
+"ALLOC F(SYSUT1) DSN('"bsds1"') SHR REUSE";
+IF dualbsds = "Y"  THEN
+  "ALLOC F(SYSUT2) DSN('"bsds2"') SHR REUSE";
+"ALLOC F(SYSIN) DSN('"listds"') SHR REUSE";
+
+/**********************************************************************/
+/* Execute CSQJU003.                                                  */
+/**********************************************************************/
+"CALL '"authlib"(CSQJU003)'";
+IF rc <> 0 THEN DO;
+  SAY "Error running CSQJU003, rc = "rc;
+  SAY "Output can be found in "ju003ds;
+  "FREE F(SYSUT1)";
+  IF dualbsds = "Y"  THEN
+    "FREE F(SYSUT2)";
+  "FREE F(SYSIN)";
+  "FREE F(SYSPRINT)";
+  SIGNAL Terminate;
+END;
+ELSE DO;
+  SAY "Bootstrap datasets updated successfully";
+  "FREE F(SYSUT1)";
+  IF dualbsds = "Y"  THEN
+    "FREE F(SYSUT2)";
+  "FREE F(SYSIN)";
+  "FREE F(SYSPRINT)";
+END;
+
+/**********************************************************************/
+/* Delete the list dataset.                                           */
+/**********************************************************************/
+rc = MSG(OFF);
+"DELETE '"listds"'";
+rc = MSG(ON);
+RETURN;
+
+
+
+
+/**********************************************************************/
+/* Perform backups:                                                   */
+/*                                                                    */
+/* You need to tailor this routine to run your backups, ideally the   */
+/* backups will be based upon the restart_rba establised during the   */
+/* execution of this exec, and will include your:                     */
+/* - Pagesets.                                                        */
+/* - Bootstrap data sets.                                             */
+/* - Active logs.                                                     */
+/* - Archive logs.                                                    */
+/* - Object definitions if they need to be backed up independently.   */
+/*                                                                    */
+/* The exec has two variables which are relevant to the restart       */
+/* Relative Byte Address (RBA):                                       */
+/* restart_rba         : The restart RBA in hexadecimal.              */
+/* decimal_restart_rba : The restart RBA in decimal for calculations. */
+/**********************************************************************/
+perform_backups:
+SAY "Starting backups";
+
+SAY "***************************************************************";
+SAY "***************************************************************";
+SAY "***** WARNING: Pagesets not backed up -                   *****";
+SAY "*****          In the event of pageset damage it may not  *****";
+SAY "*****          be possible to perform media recovery.     *****";
+SAY "***************************************************************";
+SAY "***************************************************************";
+
+SAY "Finishing backups";
+RETURN;
+
+
+/* ------------------------------------------------------------------ */
+/* termSyntaxHandler                                                  */
+/* -------------------------------------------------------------- @P1A*/
+termSyntaxHandler:
+trace 'o'                      /* turn all trace info off             */
+signal off syntax              /* switch signal off to prevent looping*/
+saveSigl = sigl
+failingLine = strip( sourceline( saveSigl ) )
+offsetToNextLine = 1
+/* Any lines ending in commas need special attention */
+do while right( failingLine, 1 ) = ','
+  /* Get rid of the trailing comma */
+  failingLine = left( failingLine, length(failingLine) -1 )
+  /* add the next line to this line, throw away multiple blank spaces */
+  failingLine = failingLine,
+                      strip( sourceLine( saveSigl + offsetToNextLine ) )
+  offsetToNextLine = offsetToNextLine + 1
+end
+say 'syntax error: line' saveSigl':' failingLine
+trace 'i'                  /* let us see what variables have been set */
+interpret failingLine
+exit 999                                                        /*@P1A*/
